@@ -23,6 +23,7 @@ import math
 import six
 
 from tensorflow.python.framework import ops
+from tensorflow.python.framework import dtypes
 from tensorflow.python.keras.utils import losses_utils
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import nn
@@ -104,6 +105,7 @@ def _dnn_linear_combined_model_fn_v2(
     dnn_hidden_units=None,
     dnn_activation_fn=nn.relu,
     dnn_dropout=None,
+    dnn_dtype=dtypes.float32,
     config=None,
     batch_norm=False,
     linear_sparse_combiner='sum',
@@ -132,6 +134,7 @@ def _dnn_linear_combined_model_fn_v2(
       will use `tf.nn.relu`.
     dnn_dropout: When not `None`, the probability we will drop out a given DNN
       coordinate.
+    dnn_dtype: Data type of hidden DNN layer.
     config: `RunConfig` object to configure the runtime settings.
     batch_norm: Whether to use batch normalization after each hidden layer.
     linear_sparse_combiner: A string specifying how to reduce the linear model
@@ -177,6 +180,7 @@ def _dnn_linear_combined_model_fn_v2(
             feature_columns=dnn_feature_columns,
             activation_fn=dnn_activation_fn,
             dropout=dnn_dropout,
+            dtype=dnn_dtype,
             batch_norm=batch_norm,
             features=features,
             mode=mode))
@@ -256,6 +260,7 @@ def _dnn_linear_combined_model_fn(features,
                                   dnn_hidden_units=None,
                                   dnn_activation_fn=nn.relu,
                                   dnn_dropout=None,
+                                  dnn_dtype=dtypes.float32,
                                   input_layer_partitioner=None,
                                   config=None,
                                   batch_norm=False,
@@ -284,6 +289,7 @@ def _dnn_linear_combined_model_fn(features,
       will use `tf.nn.relu`.
     dnn_dropout: When not `None`, the probability we will drop out a given DNN
       coordinate.
+    dnn_dtype: Data type of hidden DNN layer.
     input_layer_partitioner: Partitioner for input layer.
     config: `RunConfig` object to configure the runtime settings.
     batch_norm: Whether to use batch normalization after each hidden layer.
@@ -338,6 +344,7 @@ def _dnn_linear_combined_model_fn(features,
           feature_columns=dnn_feature_columns,
           activation_fn=dnn_activation_fn,
           dropout=dnn_dropout,
+          dtype=dnn_dtype,
           batch_norm=batch_norm,
           input_layer_partitioner=input_layer_partitioner)
       dnn_logits = dnn_logit_fn(features=features, mode=mode)
@@ -496,6 +503,7 @@ class DNNLinearCombinedClassifierV2(estimator.EstimatorV2):
                dnn_hidden_units=None,
                dnn_activation_fn=nn.relu,
                dnn_dropout=None,
+               dnn_dtype=dtypes.float32,
                n_classes=2,
                weight_column=None,
                label_vocabulary=None,
@@ -530,6 +538,7 @@ class DNNLinearCombinedClassifierV2(estimator.EstimatorV2):
         will use `tf.nn.relu`.
       dnn_dropout: When not None, the probability we will drop out
         a given coordinate.
+      dnn_dtype: Data type of hidden DNN layer.
       n_classes: Number of label classes. Defaults to 2, namely binary
         classification. Must be > 1.
       weight_column: A string or a `_NumericColumn` created by
@@ -588,6 +597,7 @@ class DNNLinearCombinedClassifierV2(estimator.EstimatorV2):
           dnn_hidden_units=dnn_hidden_units,
           dnn_activation_fn=dnn_activation_fn,
           dnn_dropout=dnn_dropout,
+          dnn_dtype=dnn_dtype,
           config=config,
           batch_norm=batch_norm,
           linear_sparse_combiner=linear_sparse_combiner,
@@ -614,6 +624,7 @@ class DNNLinearCombinedClassifier(estimator.Estimator):
                dnn_hidden_units=None,
                dnn_activation_fn=nn.relu,
                dnn_dropout=None,
+               dnn_dtype=dtypes.float32,
                n_classes=2,
                weight_column=None,
                label_vocabulary=None,
@@ -644,6 +655,7 @@ class DNNLinearCombinedClassifier(estimator.Estimator):
           dnn_hidden_units=dnn_hidden_units,
           dnn_activation_fn=dnn_activation_fn,
           dnn_dropout=dnn_dropout,
+          dnn_dtype=dnn_dtype,
           input_layer_partitioner=input_layer_partitioner,
           config=config,
           batch_norm=batch_norm,
@@ -665,6 +677,7 @@ def _init_dnn_linear_combined_estimator(
     dnn_hidden_units,
     dnn_activation_fn,
     dnn_dropout,
+    dnn_dtype,
     input_layer_partitioner,
     linear_sparse_combiner):
   """Helper function for the initialization of DNNLinearCombinedEstimator."""
@@ -690,6 +703,7 @@ def _init_dnn_linear_combined_estimator(
         dnn_hidden_units=dnn_hidden_units,
         dnn_activation_fn=dnn_activation_fn,
         dnn_dropout=dnn_dropout,
+        dnn_dtype=dnn_dtype,
         input_layer_partitioner=input_layer_partitioner,
         config=config,
         linear_sparse_combiner=linear_sparse_combiner)
@@ -792,6 +806,7 @@ class DNNLinearCombinedEstimatorV2(estimator.EstimatorV2):
                dnn_hidden_units=None,
                dnn_activation_fn=nn.relu,
                dnn_dropout=None,
+               dnn_dtype=dtypes.float32,
                config=None,
                linear_sparse_combiner='sum'):
     """Initializes a DNNLinearCombinedEstimator instance.
@@ -822,6 +837,7 @@ class DNNLinearCombinedEstimatorV2(estimator.EstimatorV2):
         will use `tf.nn.relu`.
       dnn_dropout: When not None, the probability we will drop out
         a given coordinate.
+      dnn_dtype: Data type of hidden DNN layer.
       config: RunConfig object to configure the runtime settings.
       linear_sparse_combiner: A string specifying how to reduce the linear model
         if a categorical column is multivalent.  One of "mean", "sqrtn", and
@@ -851,6 +867,7 @@ class DNNLinearCombinedEstimatorV2(estimator.EstimatorV2):
           dnn_hidden_units=dnn_hidden_units,
           dnn_activation_fn=dnn_activation_fn,
           dnn_dropout=dnn_dropout,
+          dnn_dtype=dnn_dtype,
           config=config,
           linear_sparse_combiner=linear_sparse_combiner)
 
@@ -874,6 +891,7 @@ class DNNLinearCombinedEstimator(estimator.Estimator):
                dnn_hidden_units=None,
                dnn_activation_fn=nn.relu,
                dnn_dropout=None,
+               dnn_dtype=dtypes.float32,
                input_layer_partitioner=None,
                config=None,
                linear_sparse_combiner='sum'):
@@ -895,6 +913,7 @@ class DNNLinearCombinedEstimator(estimator.Estimator):
           dnn_hidden_units=dnn_hidden_units,
           dnn_activation_fn=dnn_activation_fn,
           dnn_dropout=dnn_dropout,
+          dnn_dtype=dnn_dtype,
           input_layer_partitioner=input_layer_partitioner,
           config=config,
           linear_sparse_combiner=linear_sparse_combiner)
@@ -999,6 +1018,7 @@ class DNNLinearCombinedRegressorV2(estimator.EstimatorV2):
                dnn_hidden_units=None,
                dnn_activation_fn=nn.relu,
                dnn_dropout=None,
+               dnn_dtype=dtypes.float32,
                label_dimension=1,
                weight_column=None,
                config=None,
@@ -1032,6 +1052,7 @@ class DNNLinearCombinedRegressorV2(estimator.EstimatorV2):
         will use `tf.nn.relu`.
       dnn_dropout: When not None, the probability we will drop out
         a given coordinate.
+      dnn_dtype: Data type of hidden DNN layer.
       label_dimension: Number of regression targets per example. This is the
         size of the last dimension of the labels and logits `Tensor` objects
         (typically, these have shape `[batch_size, label_dimension]`).
@@ -1084,6 +1105,7 @@ class DNNLinearCombinedRegressorV2(estimator.EstimatorV2):
           dnn_hidden_units=dnn_hidden_units,
           dnn_activation_fn=dnn_activation_fn,
           dnn_dropout=dnn_dropout,
+          dnn_dtype=dnn_dtype,
           config=config,
           batch_norm=batch_norm,
           linear_sparse_combiner=linear_sparse_combiner)
@@ -1109,6 +1131,7 @@ class DNNLinearCombinedRegressor(estimator.Estimator):
                dnn_hidden_units=None,
                dnn_activation_fn=nn.relu,
                dnn_dropout=None,
+               dnn_dtype=dtypes.float32,
                label_dimension=1,
                weight_column=None,
                input_layer_partitioner=None,
@@ -1140,6 +1163,7 @@ class DNNLinearCombinedRegressor(estimator.Estimator):
           dnn_hidden_units=dnn_hidden_units,
           dnn_activation_fn=dnn_activation_fn,
           dnn_dropout=dnn_dropout,
+          dnn_dtype=dnn_dtype,
           input_layer_partitioner=input_layer_partitioner,
           config=config,
           batch_norm=batch_norm,

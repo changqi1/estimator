@@ -25,6 +25,7 @@ from tensorflow.python.feature_column import dense_features_v2
 from tensorflow.python.feature_column import feature_column
 from tensorflow.python.feature_column import feature_column_lib
 from tensorflow.python.framework import ops
+from tensorflow.python.framework import dtypes
 from tensorflow.python.keras.engine import training
 from tensorflow.python.keras.layers import core as keras_core
 from tensorflow.python.keras.layers import normalization_v2 as keras_norm
@@ -35,6 +36,7 @@ from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import nn
 from tensorflow.python.ops import partitioned_variables
 from tensorflow.python.ops import variable_scope
+from tensorflow.python.ops import math_ops
 from tensorflow.python.ops.losses import losses
 from tensorflow.python.summary import summary
 from tensorflow.python.training import training_util
@@ -58,7 +60,7 @@ def _add_hidden_layer_summary(value, tag):
 
 @estimator_export(v1=['estimator.experimental.dnn_logit_fn_builder'])
 def dnn_logit_fn_builder(units, hidden_units, feature_columns, activation_fn,
-                         dropout, input_layer_partitioner, batch_norm):
+                         dropout, dtype, input_layer_partitioner, batch_norm):
   """Function builder for a dnn logit_fn.
 
   Args:
@@ -70,6 +72,7 @@ def dnn_logit_fn_builder(units, hidden_units, feature_columns, activation_fn,
     activation_fn: Activation function applied to each layer.
     dropout: When not `None`, the probability we will drop out a given
       coordinate.
+    dtype: Data type of hidden DNN layer.
     input_layer_partitioner: Partitioner for input layer.
     batch_norm: Whether to use batch normalization after each hidden layer.
 
@@ -103,6 +106,7 @@ def dnn_logit_fn_builder(units, hidden_units, feature_columns, activation_fn,
         feature_columns,
         activation_fn,
         dropout,
+        dtype,
         input_layer_partitioner,
         batch_norm,
         name='dnn')
@@ -112,7 +116,7 @@ def dnn_logit_fn_builder(units, hidden_units, feature_columns, activation_fn,
 
 
 def dnn_logit_fn_builder_v2(units, hidden_units, feature_columns, activation_fn,
-                            dropout, batch_norm):
+                            dropout, dtype, batch_norm):
   """Function builder for a dnn logit_fn.
 
   Args:
@@ -123,6 +127,7 @@ def dnn_logit_fn_builder_v2(units, hidden_units, feature_columns, activation_fn,
     activation_fn: Activation function applied to each layer.
     dropout: When not `None`, the probability we will drop out a given
       coordinate.
+    dtype: Data type of hidden DNN layer.
     batch_norm: Whether to use batch normalization after each hidden layer.
 
   Returns:
@@ -155,6 +160,7 @@ def dnn_logit_fn_builder_v2(units, hidden_units, feature_columns, activation_fn,
         feature_columns,
         activation_fn,
         dropout,
+        dtype,
         batch_norm,
         name='dnn')
     return dnn_model(features, mode)
@@ -176,6 +182,7 @@ class _DNNModel(training.Model):
                feature_columns,
                activation_fn,
                dropout,
+               dtype,
                input_layer_partitioner,
                batch_norm,
                name=None,
@@ -193,50 +200,91 @@ class _DNNModel(training.Model):
     self._add_layer(self._input_layer, 'input_layer')
 
     self._dropout = dropout
+    self._dtype = dtype
     self._batch_norm = batch_norm
 
     self._hidden_layers = []
     self._dropout_layers = []
     self._batch_norm_layers = []
     self._hidden_layer_scope_names = []
-    for layer_id, num_hidden_units in enumerate(hidden_units):
-      with variable_scope.variable_scope(
-          'hiddenlayer_%d' % layer_id) as hidden_layer_scope:
-        hidden_layer = core_layers.Dense(
-            units=num_hidden_units,
-            activation=activation_fn,
-            kernel_initializer=init_ops.glorot_uniform_initializer(),
-            name=hidden_layer_scope,
-            _scope=hidden_layer_scope)
-        self._add_layer(hidden_layer, hidden_layer_scope.name)
-        self._hidden_layer_scope_names.append(hidden_layer_scope.name)
-        self._hidden_layers.append(hidden_layer)
-        if self._dropout is not None:
-          dropout_layer = core_layers.Dropout(rate=self._dropout)
-          self._add_layer(dropout_layer, dropout_layer.name)
-          self._dropout_layers.append(dropout_layer)
-        if self._batch_norm:
-          batch_norm_layer = normalization.BatchNormalization(
-              # The default momentum 0.99 actually crashes on certain
-              # problem, so here we use 0.999, which is the default of
-              # tf.contrib.layers.batch_norm.
-              momentum=0.999,
-              trainable=True,
-              name='batchnorm_%d' % layer_id,
-              _scope='batchnorm_%d' % layer_id)
-          self._add_layer(batch_norm_layer, batch_norm_layer.name)
-          self._batch_norm_layers.append(batch_norm_layer)
+    if self._dtype == dtypes.bfloat16:
+      for layer_id, num_hidden_units in enumerate(hidden_units):
+        with variable_scope.variable_scope(
+            'hiddenlayer_%d' % layer_id).bfloat16_scope() as hidden_layer_scope:
+          hidden_layer = core_layers.Dense(
+              units=num_hidden_units,
+              activation=activation_fn,
+              kernel_initializer=init_ops.glorot_uniform_initializer(),
+              name=hidden_layer_scope,
+              _scope=hidden_layer_scope)
+          self._add_layer(hidden_layer, hidden_layer_scope.name)
+          self._hidden_layer_scope_names.append(hidden_layer_scope.name)
+          self._hidden_layers.append(hidden_layer)
+          if self._dropout is not None:
+            dropout_layer = core_layers.Dropout(rate=self._dropout)
+            self._add_layer(dropout_layer, dropout_layer.name)
+            self._dropout_layers.append(dropout_layer)
+          if self._batch_norm:
+            batch_norm_layer = normalization.BatchNormalization(
+                # The default momentum 0.99 actually crashes on certain
+                # problem, so here we use 0.999, which is the default of
+                # tf.contrib.layers.batch_norm.
+                momentum=0.999,
+                trainable=True,
+                name='batchnorm_%d' % layer_id,
+                _scope='batchnorm_%d' % layer_id)
+            self._add_layer(batch_norm_layer, batch_norm_layer.name)
+            self._batch_norm_layers.append(batch_norm_layer)
 
-    with variable_scope.variable_scope('logits') as logits_scope:
-      self._logits_layer = core_layers.Dense(
-          units=units,
-          activation=None,
-          kernel_initializer=init_ops.glorot_uniform_initializer(),
-          name=logits_scope,
-          _scope=logits_scope)
-      self._add_layer(self._logits_layer, logits_scope.name)
-      self._logits_scope_name = logits_scope.name
-    self._input_layer_partitioner = input_layer_partitioner
+      with variable_scope.variable_scope('logits') as logits_scope:
+        self._logits_layer = core_layers.Dense(
+            units=units,
+            activation=None,
+            kernel_initializer=init_ops.glorot_uniform_initializer(),
+            name=logits_scope,
+            _scope=logits_scope)
+        self._add_layer(self._logits_layer, logits_scope.name)
+        self._logits_scope_name = logits_scope.name
+      self._input_layer_partitioner = input_layer_partitioner
+    else:
+      for layer_id, num_hidden_units in enumerate(hidden_units):
+        with variable_scope.variable_scope(
+            'hiddenlayer_%d' % layer_id) as hidden_layer_scope:
+          hidden_layer = core_layers.Dense(
+              units=num_hidden_units,
+              activation=activation_fn,
+              kernel_initializer=init_ops.glorot_uniform_initializer(),
+              name=hidden_layer_scope,
+              _scope=hidden_layer_scope)
+          self._add_layer(hidden_layer, hidden_layer_scope.name)
+          self._hidden_layer_scope_names.append(hidden_layer_scope.name)
+          self._hidden_layers.append(hidden_layer)
+          if self._dropout is not None:
+            dropout_layer = core_layers.Dropout(rate=self._dropout)
+            self._add_layer(dropout_layer, dropout_layer.name)
+            self._dropout_layers.append(dropout_layer)
+          if self._batch_norm:
+            batch_norm_layer = normalization.BatchNormalization(
+                # The default momentum 0.99 actually crashes on certain
+                # problem, so here we use 0.999, which is the default of
+                # tf.contrib.layers.batch_norm.
+                momentum=0.999,
+                trainable=True,
+                name='batchnorm_%d' % layer_id,
+                _scope='batchnorm_%d' % layer_id)
+            self._add_layer(batch_norm_layer, batch_norm_layer.name)
+            self._batch_norm_layers.append(batch_norm_layer)
+
+      with variable_scope.variable_scope('logits') as logits_scope:
+        self._logits_layer = core_layers.Dense(
+            units=units,
+            activation=None,
+            kernel_initializer=init_ops.glorot_uniform_initializer(),
+            name=logits_scope,
+            _scope=logits_scope)
+        self._add_layer(self._logits_layer, logits_scope.name)
+        self._logits_scope_name = logits_scope.name
+      self._input_layer_partitioner = input_layer_partitioner
 
   def call(self, features, mode):
     is_training = mode == ModeKeys.TRAIN
@@ -244,23 +292,44 @@ class _DNNModel(training.Model):
     # which modifies the constructed graph. Hence we add another name_scope
     # here which is the one before the training.Model one was applied.
     # TODO(rohanj): Remove this in TF 2.0 (b/116728605)
-    with ops.name_scope(name=_get_previous_name_scope()):
-      # TODO(rohanj): Remove dependence on variable scope for partitioning.
-      with variable_scope.variable_scope(
-          'input_from_feature_columns',
-          partitioner=self._input_layer_partitioner):
-        net = self._input_layer(features)
-      for i in range(len(self._hidden_layers)):
-        net = self._hidden_layers[i](net)
-        if self._dropout is not None and is_training:
-          net = self._dropout_layers[i](net, training=True)
-        if self._batch_norm:
-          net = self._batch_norm_layers[i](net, training=is_training)
-        _add_hidden_layer_summary(net, self._hidden_layer_scope_names[i])
+    if self._dtype == dtypes.bfloat16:
+      with variable_scope.variable_scope(_get_previous_name_scope()).bfloat16_scope():
+        # TODO(rohanj): Remove dependence on variable scope for partitioning.
+        with variable_scope.variable_scope(
+            'input_from_feature_columns',
+            partitioner=self._input_layer_partitioner):
+          net = self._input_layer(features)
+        net = math_ops.cast(net, dtype=dtypes.bfloat16)
+        for i in range(len(self._hidden_layers)):
+          net = self._hidden_layers[i](net)
+          if self._dropout is not None and is_training:
+            net = self._dropout_layers[i](net, training=True)
+          if self._batch_norm:
+            net = self._batch_norm_layers[i](net, training=is_training)
+          _add_hidden_layer_summary(net, self._hidden_layer_scope_names[i])
 
-      logits = self._logits_layer(net)
-      _add_hidden_layer_summary(logits, self._logits_scope_name)
-      return logits
+        logits = self._logits_layer(net)
+        logits = math_ops.cast(logits, dtype=dtypes.float32)
+        _add_hidden_layer_summary(logits, self._logits_scope_name)
+        return logits
+    else:
+      with ops.name_scope(name=_get_previous_name_scope()):
+        # TODO(rohanj): Remove dependence on variable scope for partitioning.
+        with variable_scope.variable_scope(
+            'input_from_feature_columns',
+            partitioner=self._input_layer_partitioner):
+          net = self._input_layer(features)
+        for i in range(len(self._hidden_layers)):
+          net = self._hidden_layers[i](net)
+          if self._dropout is not None and is_training:
+            net = self._dropout_layers[i](net, training=True)
+          if self._batch_norm:
+            net = self._batch_norm_layers[i](net, training=is_training)
+          _add_hidden_layer_summary(net, self._hidden_layer_scope_names[i])
+
+        logits = self._logits_layer(net)
+        _add_hidden_layer_summary(logits, self._logits_scope_name)
+        return logits
 
   def _add_layer(self, layer, layer_name):
     # "Magic" required for keras.Model classes to track all the variables in
@@ -290,6 +359,7 @@ class _DNNModelV2(training.Model):
                feature_columns,
                activation_fn,
                dropout,
+               dtype,
                batch_norm,
                name=None,
                **kwargs):
@@ -311,59 +381,111 @@ class _DNNModelV2(training.Model):
             'tf.compat.v1.feature_column.*, respectively.')
 
     self._dropout = dropout
+    self._dtype = dtype
     self._batch_norm = batch_norm
 
     self._hidden_layers = []
     self._dropout_layers = []
     self._batch_norm_layers = []
     self._hidden_layer_scope_names = []
-    for layer_id, num_hidden_units in enumerate(hidden_units):
-      with ops.name_scope('hiddenlayer_%d' % layer_id) as hidden_layer_scope:
-        # Get scope name without the trailing slash.
-        hidden_shared_name = _name_from_scope_name(hidden_layer_scope)
-        hidden_layer = keras_core.Dense(
-            units=num_hidden_units,
-            activation=activation_fn,
-            kernel_initializer=init_ops.glorot_uniform_initializer(),
-            name=hidden_shared_name)
-        self._hidden_layer_scope_names.append(hidden_shared_name)
-        self._hidden_layers.append(hidden_layer)
-        if self._dropout is not None:
-          dropout_layer = keras_core.Dropout(rate=self._dropout)
-          self._dropout_layers.append(dropout_layer)
-        if self._batch_norm:
-          batch_norm_name = hidden_shared_name + '/batchnorm_%d' % layer_id
-          batch_norm_layer = keras_norm.BatchNormalization(
-              # The default momentum 0.99 actually crashes on certain
-              # problem, so here we use 0.999, which is the default of
-              # tf.contrib.layers.batch_norm.
-              momentum=0.999,
-              trainable=True,
-              name=batch_norm_name)
-          self._batch_norm_layers.append(batch_norm_layer)
+    if self._dtype == dtypes.bfloat16:
+      for layer_id, num_hidden_units in enumerate(hidden_units):
+        with variable_scope.variable_scope(
+            'hiddenlayer_%d' % layer_id).bfloat16_scope() as hidden_layer_scope:
+          # Get scope name without the trailing slash.
+          hidden_shared_name = _name_from_scope_name(hidden_layer_scope)
+          hidden_layer = keras_core.Dense(
+              units=num_hidden_units,
+              activation=activation_fn,
+              kernel_initializer=init_ops.glorot_uniform_initializer(),
+              name=hidden_shared_name)
+          self._hidden_layer_scope_names.append(hidden_shared_name)
+          self._hidden_layers.append(hidden_layer)
+          if self._dropout is not None:
+            dropout_layer = keras_core.Dropout(rate=self._dropout)
+            self._dropout_layers.append(dropout_layer)
+          if self._batch_norm:
+            batch_norm_name = hidden_shared_name + '/batchnorm_%d' % layer_id
+            batch_norm_layer = keras_norm.BatchNormalization(
+                # The default momentum 0.99 actually crashes on certain
+                # problem, so here we use 0.999, which is the default of
+                # tf.contrib.layers.batch_norm.
+                momentum=0.999,
+                trainable=True,
+                name=batch_norm_name)
+            self._batch_norm_layers.append(batch_norm_layer)
 
-    with ops.name_scope('logits') as logits_scope:
-      logits_shared_name = _name_from_scope_name(logits_scope)
-      self._logits_layer = keras_core.Dense(
-          units=units,
-          activation=None,
-          kernel_initializer=init_ops.glorot_uniform_initializer(),
-          name=logits_shared_name)
-      self._logits_scope_name = logits_shared_name
+      with variable_scope.variable_scope('logits').bfloat16_scope() as logits_scope:
+        logits_shared_name = _name_from_scope_name(logits_scope)
+        self._logits_layer = keras_core.Dense(
+            units=units,
+            activation=None,
+            kernel_initializer=init_ops.glorot_uniform_initializer(),
+            name=logits_shared_name)
+        self._logits_scope_name = logits_shared_name
+    else:
+      for layer_id, num_hidden_units in enumerate(hidden_units):
+        with variable_scope.variable_scope(
+            'hiddenlayer_%d' % layer_id) as hidden_layer_scope:
+          # Get scope name without the trailing slash.
+          hidden_shared_name = _name_from_scope_name(hidden_layer_scope)
+          hidden_layer = keras_core.Dense(
+              units=num_hidden_units,
+              activation=activation_fn,
+              kernel_initializer=init_ops.glorot_uniform_initializer(),
+              name=hidden_shared_name)
+          self._hidden_layer_scope_names.append(hidden_shared_name)
+          self._hidden_layers.append(hidden_layer)
+          if self._dropout is not None:
+            dropout_layer = keras_core.Dropout(rate=self._dropout)
+            self._dropout_layers.append(dropout_layer)
+          if self._batch_norm:
+            batch_norm_name = hidden_shared_name + '/batchnorm_%d' % layer_id
+            batch_norm_layer = keras_norm.BatchNormalization(
+                # The default momentum 0.99 actually crashes on certain
+                # problem, so here we use 0.999, which is the default of
+                # tf.contrib.layers.batch_norm.
+                momentum=0.999,
+                trainable=True,
+                name=batch_norm_name)
+            self._batch_norm_layers.append(batch_norm_layer)
+
+      with variable_scope.variable_scope('logits') as logits_scope:
+        logits_shared_name = _name_from_scope_name(logits_scope)
+        self._logits_layer = keras_core.Dense(
+            units=units,
+            activation=None,
+            kernel_initializer=init_ops.glorot_uniform_initializer(),
+            name=logits_shared_name)
+        self._logits_scope_name = logits_shared_name
 
   def call(self, features, mode):
     is_training = mode == ModeKeys.TRAIN
     net = self._input_layer(features)
-    for i in range(len(self._hidden_layers)):
-      net = self._hidden_layers[i](net)
-      if self._dropout is not None and is_training:
-        net = self._dropout_layers[i](net, training=True)
-      if self._batch_norm:
-        net = self._batch_norm_layers[i](net, training=is_training)
-      _add_hidden_layer_summary(net, self._hidden_layer_scope_names[i])
+    if self._dtype == dtypes.bfloat16:
+      net = math_ops.cast(net, dtype=dtypes.bfloat16)
+      for i in range(len(self._hidden_layers)):
+        net = self._hidden_layers[i](net)
+        if self._dropout is not None and is_training:
+          net = self._dropout_layers[i](net, training=True)
+        if self._batch_norm:
+          net = self._batch_norm_layers[i](net, training=is_training)
+        _add_hidden_layer_summary(net, self._hidden_layer_scope_names[i])
 
-    logits = self._logits_layer(net)
-    _add_hidden_layer_summary(logits, self._logits_scope_name)
+      logits = self._logits_layer(net)
+      logits = math_ops.cast(logits, dtype=dtypes.float32)
+      _add_hidden_layer_summary(logits, self._logits_scope_name)
+    else:
+      for i in range(len(self._hidden_layers)):
+        net = self._hidden_layers[i](net)
+        if self._dropout is not None and is_training:
+          net = self._dropout_layers[i](net, training=True)
+        if self._batch_norm:
+          net = self._batch_norm_layers[i](net, training=is_training)
+        _add_hidden_layer_summary(net, self._hidden_layer_scope_names[i])
+
+      logits = self._logits_layer(net)
+      _add_hidden_layer_summary(logits, self._logits_scope_name)
     return logits
 
 
@@ -401,6 +523,7 @@ def _dnn_model_fn(features,
                   optimizer='Adagrad',
                   activation_fn=nn.relu,
                   dropout=None,
+                  dtype=dtypes.float32,
                   input_layer_partitioner=None,
                   config=None,
                   use_tpu=False,
@@ -422,6 +545,7 @@ def _dnn_model_fn(features,
     activation_fn: Activation function applied to each layer.
     dropout: When not `None`, the probability we will drop out a given
       coordinate.
+    dtype: Data type of hidden DNN layer.
     input_layer_partitioner: Partitioner for input layer. Defaults to
       `min_max_variable_partitioner` with `min_slice_size` 64 << 20.
     config: `RunConfig` object to configure the runtime settings.
@@ -458,6 +582,7 @@ def _dnn_model_fn(features,
         feature_columns=feature_columns,
         activation_fn=activation_fn,
         dropout=dropout,
+        dtype=dtype,
         input_layer_partitioner=input_layer_partitioner,
         batch_norm=batch_norm)
     logits = logit_fn(features=features, mode=mode)
@@ -467,7 +592,7 @@ def _dnn_model_fn(features,
 
 
 def _dnn_model_fn_builder_v2(units, hidden_units, feature_columns,
-                             activation_fn, dropout, batch_norm,
+                             activation_fn, dropout, dtype, batch_norm,
                              features, mode):
   """Function builder for dnn logits, trainable variables and update ops.
 
@@ -479,6 +604,7 @@ def _dnn_model_fn_builder_v2(units, hidden_units, feature_columns,
     activation_fn: Activation function applied to each layer.
     dropout: When not `None`, the probability we will drop out a given
       coordinate.
+    dtype: Data type of hidden DNN layer.
     batch_norm: Whether to use batch normalization after each hidden layer.
     features: This is the first item returned from the `input_fn` passed to
       `train`, `evaluate`, and `predict`. This should be a single `Tensor` or
@@ -504,6 +630,7 @@ def _dnn_model_fn_builder_v2(units, hidden_units, feature_columns,
       feature_columns,
       activation_fn,
       dropout,
+      dtype,
       batch_norm,
       name='dnn')
   logits = dnn_model(features, mode)
@@ -522,6 +649,7 @@ def dnn_model_fn_v2(features,
                     optimizer='Adagrad',
                     activation_fn=nn.relu,
                     dropout=None,
+                    dtype=dtypes.float32,
                     config=None,
                     use_tpu=False,
                     batch_norm=False):
@@ -547,6 +675,7 @@ def dnn_model_fn_v2(features,
     activation_fn: Activation function applied to each layer.
     dropout: When not `None`, the probability we will drop out a given
       coordinate.
+    dtype: Data type of hidden DNN layer.
     config: `RunConfig` object to configure the runtime settings.
     use_tpu: Whether to make a DNN model able to run on TPU. Will make function
       return a `_TPUEstimatorSpec` instance and disable variable partitioning.
@@ -568,6 +697,7 @@ def dnn_model_fn_v2(features,
       feature_columns=feature_columns,
       activation_fn=activation_fn,
       dropout=dropout,
+      dtype=dtype,
       batch_norm=batch_norm,
       features=features,
       mode=mode)
@@ -693,6 +823,7 @@ class DNNClassifierV2(estimator.EstimatorV2):
       optimizer='Adagrad',
       activation_fn=nn.relu,
       dropout=None,
+      dtype=dtypes.float32,
       config=None,
       warm_start_from=None,
       loss_reduction=losses_utils.ReductionV2.SUM_OVER_BATCH_SIZE,
@@ -733,6 +864,7 @@ class DNNClassifierV2(estimator.EstimatorV2):
         use `tf.nn.relu`.
       dropout: When not `None`, the probability we will drop out a given
         coordinate.
+      dtype: Data type of hidden DNN layer.
       config: `RunConfig` object to configure the runtime settings.
       warm_start_from: A string filepath to a checkpoint to warm-start from, or
         a `WarmStartSettings` object to fully configure warm-starting.  If the
@@ -760,6 +892,7 @@ class DNNClassifierV2(estimator.EstimatorV2):
           optimizer=optimizer,
           activation_fn=activation_fn,
           dropout=dropout,
+          dtype=dtype,
           config=config,
           batch_norm=batch_norm)
 
@@ -785,6 +918,7 @@ class DNNClassifier(estimator.Estimator):
       optimizer='Adagrad',
       activation_fn=nn.relu,
       dropout=None,
+      dtype=dtypes.float32,
       input_layer_partitioner=None,
       config=None,
       warm_start_from=None,
@@ -806,6 +940,7 @@ class DNNClassifier(estimator.Estimator):
           optimizer=optimizer,
           activation_fn=activation_fn,
           dropout=dropout,
+          dtype=dtype,
           input_layer_partitioner=input_layer_partitioner,
           config=config,
           batch_norm=batch_norm)
@@ -918,6 +1053,7 @@ class DNNEstimatorV2(estimator.EstimatorV2):
                optimizer='Adagrad',
                activation_fn=nn.relu,
                dropout=None,
+               dtype=dtypes.float32,
                config=None,
                warm_start_from=None,
                batch_norm=False):
@@ -942,6 +1078,7 @@ class DNNEstimatorV2(estimator.EstimatorV2):
         use `tf.nn.relu`.
       dropout: When not `None`, the probability we will drop out a given
         coordinate.
+      dtype: Data type of hidden DNN layer.
       config: `RunConfig` object to configure the runtime settings.
       warm_start_from: A string filepath to a checkpoint to warm-start from, or
         a `WarmStartSettings` object to fully configure warm-starting.  If the
@@ -962,6 +1099,7 @@ class DNNEstimatorV2(estimator.EstimatorV2):
           optimizer=optimizer,
           activation_fn=activation_fn,
           dropout=dropout,
+          dtype=dtype,
           config=config,
           batch_norm=batch_norm)
     super(DNNEstimatorV2, self).__init__(
@@ -981,6 +1119,7 @@ class DNNEstimator(estimator.Estimator):
                optimizer='Adagrad',
                activation_fn=nn.relu,
                dropout=None,
+               dtype=dtypes.float32,
                input_layer_partitioner=None,
                config=None,
                warm_start_from=None,
@@ -997,6 +1136,7 @@ class DNNEstimator(estimator.Estimator):
           optimizer=optimizer,
           activation_fn=activation_fn,
           dropout=dropout,
+          dtype=dtype,
           input_layer_partitioner=input_layer_partitioner,
           config=config,
           batch_norm=batch_norm)
@@ -1102,6 +1242,7 @@ class DNNRegressorV2(estimator.EstimatorV2):
       optimizer='Adagrad',
       activation_fn=nn.relu,
       dropout=None,
+      dtype=dtypes.float32,
       config=None,
       warm_start_from=None,
       loss_reduction=losses_utils.ReductionV2.SUM_OVER_BATCH_SIZE,
@@ -1136,6 +1277,7 @@ class DNNRegressorV2(estimator.EstimatorV2):
         use `tf.nn.relu`.
       dropout: When not `None`, the probability we will drop out a given
         coordinate.
+      dtype: Data type of hidden DNN layer.
       config: `RunConfig` object to configure the runtime settings.
       warm_start_from: A string filepath to a checkpoint to warm-start from, or
         a `WarmStartSettings` object to fully configure warm-starting.  If the
@@ -1162,6 +1304,7 @@ class DNNRegressorV2(estimator.EstimatorV2):
           optimizer=optimizer,
           activation_fn=activation_fn,
           dropout=dropout,
+          dtype=dtype,
           config=config,
           batch_norm=batch_norm)
 
@@ -1186,6 +1329,7 @@ class DNNRegressor(estimator.Estimator):
       optimizer='Adagrad',
       activation_fn=nn.relu,
       dropout=None,
+      dtype=dtypes.float32,
       input_layer_partitioner=None,
       config=None,
       warm_start_from=None,
@@ -1209,6 +1353,7 @@ class DNNRegressor(estimator.Estimator):
           optimizer=optimizer,
           activation_fn=activation_fn,
           dropout=dropout,
+          dtype=dtype,
           input_layer_partitioner=input_layer_partitioner,
           config=config,
           batch_norm=batch_norm)
