@@ -210,7 +210,7 @@ class _DNNModel(training.Model):
     if self._dtype == dtypes.bfloat16:
       for layer_id, num_hidden_units in enumerate(hidden_units):
         with variable_scope.variable_scope(
-            'hiddenlayer_%d' % layer_id).bfloat16_scope() as hidden_layer_scope:
+            'hiddenlayer_%d' % layer_id).keep_weights() as hidden_layer_scope:
           hidden_layer = core_layers.Dense(
               units=num_hidden_units,
               activation=activation_fn,
@@ -293,7 +293,7 @@ class _DNNModel(training.Model):
     # here which is the one before the training.Model one was applied.
     # TODO(rohanj): Remove this in TF 2.0 (b/116728605)
     if self._dtype == dtypes.bfloat16:
-      with variable_scope.variable_scope(_get_previous_name_scope()).bfloat16_scope():
+      with variable_scope.variable_scope(_get_previous_name_scope()).keep_weights():
         # TODO(rohanj): Remove dependence on variable scope for partitioning.
         with variable_scope.variable_scope(
             'input_from_feature_columns',
@@ -391,7 +391,7 @@ class _DNNModelV2(training.Model):
     if self._dtype == dtypes.bfloat16:
       for layer_id, num_hidden_units in enumerate(hidden_units):
         with variable_scope.variable_scope(
-            'hiddenlayer_%d' % layer_id).bfloat16_scope() as hidden_layer_scope:
+            'hiddenlayer_%d' % layer_id).keep_weights() as hidden_layer_scope:
           # Get scope name without the trailing slash.
           hidden_shared_name = _name_from_scope_name(hidden_layer_scope)
           hidden_layer = keras_core.Dense(
@@ -415,7 +415,7 @@ class _DNNModelV2(training.Model):
                 name=batch_norm_name)
             self._batch_norm_layers.append(batch_norm_layer)
 
-      with variable_scope.variable_scope('logits').bfloat16_scope() as logits_scope:
+      with variable_scope.variable_scope('logits').keep_weights() as logits_scope:
         logits_shared_name = _name_from_scope_name(logits_scope)
         self._logits_layer = keras_core.Dense(
             units=units,
