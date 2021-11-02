@@ -60,7 +60,7 @@ def _add_hidden_layer_summary(value, tag):
 
 @estimator_export(v1=['estimator.experimental.dnn_logit_fn_builder'])
 def dnn_logit_fn_builder(units, hidden_units, feature_columns, activation_fn,
-                         dropout, dtype, input_layer_partitioner, batch_norm):
+                         dropout, dtype, input_layer_partitioner, dense_layer_partitioner, batch_norm):
   """Function builder for a dnn logit_fn.
 
   Args:
@@ -108,6 +108,7 @@ def dnn_logit_fn_builder(units, hidden_units, feature_columns, activation_fn,
         dropout,
         dtype,
         input_layer_partitioner,
+        dense_layer_partitioner,
         batch_norm,
         name='dnn')
     return dnn_model(features, mode)
@@ -184,6 +185,7 @@ class _DNNModel(training.Model):
                dropout,
                dtype,
                input_layer_partitioner,
+               dense_layer_partitioner,
                batch_norm,
                name=None,
                **kwargs):
@@ -210,7 +212,7 @@ class _DNNModel(training.Model):
     if self._dtype == dtypes.bfloat16:
       for layer_id, num_hidden_units in enumerate(hidden_units):
         with variable_scope.variable_scope(
-            'hiddenlayer_%d' % layer_id).keep_weights() as hidden_layer_scope:
+            'hiddenlayer_%d' % layer_id, partitioner=dense_layer_partitioner).keep_weights() as hidden_layer_scope:
           hidden_layer = core_layers.Dense(
               units=num_hidden_units,
               activation=activation_fn,
@@ -236,7 +238,7 @@ class _DNNModel(training.Model):
             self._add_layer(batch_norm_layer, batch_norm_layer.name)
             self._batch_norm_layers.append(batch_norm_layer)
 
-      with variable_scope.variable_scope('logits') as logits_scope:
+      with variable_scope.variable_scope('logits', partitioner=dense_layer_partitioner) as logits_scope:
         self._logits_layer = core_layers.Dense(
             units=units,
             activation=None,
@@ -249,7 +251,7 @@ class _DNNModel(training.Model):
     else:
       for layer_id, num_hidden_units in enumerate(hidden_units):
         with variable_scope.variable_scope(
-            'hiddenlayer_%d' % layer_id) as hidden_layer_scope:
+            'hiddenlayer_%d' % layer_id, partitioner=dense_layer_partitioner) as hidden_layer_scope:
           hidden_layer = core_layers.Dense(
               units=num_hidden_units,
               activation=activation_fn,
@@ -275,7 +277,7 @@ class _DNNModel(training.Model):
             self._add_layer(batch_norm_layer, batch_norm_layer.name)
             self._batch_norm_layers.append(batch_norm_layer)
 
-      with variable_scope.variable_scope('logits') as logits_scope:
+      with variable_scope.variable_scope('logits', partitioner=dense_layer_partitioner) as logits_scope:
         self._logits_layer = core_layers.Dense(
             units=units,
             activation=None,

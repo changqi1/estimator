@@ -262,6 +262,7 @@ def _dnn_linear_combined_model_fn(features,
                                   dnn_dropout=None,
                                   dnn_dtype=dtypes.float32,
                                   input_layer_partitioner=None,
+                                  dense_layer_partitioner=None,
                                   config=None,
                                   batch_norm=False,
                                   linear_sparse_combiner='sum'):
@@ -316,6 +317,10 @@ def _dnn_linear_combined_model_fn(features,
       partitioned_variables.min_max_variable_partitioner(
           max_partitions=num_ps_replicas,
           min_slice_size=64 << 20))
+  dense_layer_partitioner = dense_layer_partitioner or (
+      partitioned_variables.min_max_variable_partitioner(
+          max_partitions=num_ps_replicas,
+          min_slice_size=64 << 10))
 
   # Build DNN Logits.
   dnn_parent_scope = 'dnn'
@@ -346,7 +351,8 @@ def _dnn_linear_combined_model_fn(features,
           dropout=dnn_dropout,
           dtype=dnn_dtype,
           batch_norm=batch_norm,
-          input_layer_partitioner=input_layer_partitioner)
+          input_layer_partitioner=input_layer_partitioner,
+          dense_layer_partitioner=dense_layer_partitioner)
       dnn_logits = dnn_logit_fn(features=features, mode=mode)
 
   linear_parent_scope = 'linear'
@@ -629,6 +635,7 @@ class DNNLinearCombinedClassifier(estimator.Estimator):
                weight_column=None,
                label_vocabulary=None,
                input_layer_partitioner=None,
+               dense_layer_partitioner=None,
                config=None,
                warm_start_from=None,
                loss_reduction=losses.Reduction.SUM,
@@ -657,6 +664,7 @@ class DNNLinearCombinedClassifier(estimator.Estimator):
           dnn_dropout=dnn_dropout,
           dnn_dtype=dnn_dtype,
           input_layer_partitioner=input_layer_partitioner,
+          dense_layer_partitioner=dense_layer_partitioner,
           config=config,
           batch_norm=batch_norm,
           linear_sparse_combiner=linear_sparse_combiner)
